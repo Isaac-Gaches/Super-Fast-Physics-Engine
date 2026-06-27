@@ -4,8 +4,8 @@ use crate::simulation::grid::Grid;
 use rayon::prelude::*;
 use std::cell::UnsafeCell;
 
-const RELAXATION: f32 = 0.4;
-const MAX_OVERLAP_FRACTION: f32 = 0.3;
+const STIFFNESS: f32 = 0.4;
+const MAX_OVERLAP: f32 = 0.6;
 
 const COLLISION_DIST_SQ: f32 = 4.0;
 const MIN_DIST_SQ: f32 = 1e-10;
@@ -24,6 +24,7 @@ struct Shared<T>(UnsafeCell<T>);
 
 unsafe impl<T> Sync for Shared<T> {}
 
+#[inline]
 pub fn resolve_collisions(
     balls: &mut Balls,
     grid: &Grid,
@@ -34,55 +35,78 @@ pub fn resolve_collisions(
     run_pass(&shared, grid, 1);
 }
 
+#[inline]
 fn run_pass(
     balls: &Shared<&mut Balls>,
     grid: &Grid,
     parity: usize,
 ) {
-    let stripes =
-        grid.grid_w.div_ceil(STRIPE_WIDTH);
+    let stripes = grid.grid_w.div_ceil(STRIPE_WIDTH);
 
     (0..stripes)
         .into_par_iter()
-        .filter(|s| s % 2 == parity)
+        .filter(|s| (s & 1) == parity)
         .for_each(|stripe| unsafe {
-            process_stripe(
-                &mut **balls.0.get(),
-                grid,
-                stripe,
-            );
+            let balls = &mut **balls.0.get();
+            process_stripe(balls, grid, stripe);
         });
 }
 
+#[inline(always)]
 unsafe fn process_stripe(
     balls: &mut Balls,
     grid: &Grid,
     stripe: usize,
 ) {
-    let start_x = stripe * STRIPE_WIDTH;
+    let xs = &mut balls.x;
+    let ys = &mut balls.y;
 
+    let start_x = stripe * STRIPE_WIDTH;
     let end_x = ((stripe + 1) * STRIPE_WIDTH).min(grid.grid_w);
 
-    for cy in 0..grid.grid_h {
+    let grid_w = grid.grid_w;
+    let grid_h = grid.grid_h;
+
+    for cy in 0..grid_h {
         for cx in start_x..end_x {
 
-            let cell = cx + cy * grid.grid_w;
+            let cell = cx + cy * grid_w;
+
+            let a_start = *grid.cell_start.get_unchecked(cell) as usize;
+
+            let a_count = *grid.cell_count.get_unchecked(cell) as usize;
+
+            if a_count == 0 {
+                continue;
+            }
 
             for &(ox, oy) in &NEIGHBOURS {
                 let nx = cx as i32 + ox;
                 let ny = cy as i32 + oy;
 
-                if nx < 0 || ny < 0 || nx >= grid.grid_w as i32 || ny >= grid.grid_h as i32 {
+                if nx < 0 || ny < 0 || nx >= grid_w as i32 || ny >= grid_h as i32 {
                     continue;
                 }
 
-                let other = nx as usize + ny as usize * grid.grid_w;
+                let other = nx as usize + ny as usize * grid_w;
 
-                process_pair(
-                    balls,
-                    grid,
+                let b_start = *grid.cell_start.get_unchecked(other) as usize;
+                let b_count = *grid.cell_count.get_unchecked(other) as usize;
+
+                if b_count == 0 {
+                    continue;
+                }
+
+                collide_cells(
+                    xs,
+                    ys,
+                    &grid.particle_ids,
                     cell,
                     other,
+                    a_start,
+                    a_count,
+                    b_start,
+                    b_count,
                 );
             }
         }
@@ -90,60 +114,53 @@ unsafe fn process_stripe(
 }
 
 #[inline(always)]
-unsafe fn process_pair(
-    balls: &mut Balls,
-    grid: &Grid,
+unsafe fn collide_cells(
+    xs: &mut [f32],
+    ys: &mut [f32],
+    ids: &[u32],
     a_cell: usize,
     b_cell: usize,
+    a_start: usize,
+    a_count: usize,
+    b_start: usize,
+    b_count: usize,
 ) {
-    let a_start = grid.cell_start[a_cell] as usize;
-    let a_count = grid.cell_count[a_cell] as usize;
-
-    let b_start = grid.cell_start[b_cell] as usize;
-    let b_count = grid.cell_count[b_cell] as usize;
-
-    if a_count == 0 || b_count == 0 {
-        return;
-    }
-
     for ai in 0..a_count {
-        let a = grid.particle_ids[a_start + ai] as usize;
+        let a = *ids.get_unchecked(a_start + ai) as usize;
 
-        let ax = *balls.x.get_unchecked(a);
+        let ax = *xs.get_unchecked(a);
+        let ay = *ys.get_unchecked(a);
 
-        let ay = *balls.y.get_unchecked(a);
-
-        let start =
-            if a_cell == b_cell {
-                ai + 1
-            } else {
-                0
-            };
+        let start = if a_cell == b_cell {
+            ai + 1
+        } else {
+            0
+        };
 
         for bi in start..b_count {
-            let b = grid.particle_ids[b_start + bi] as usize;
+            let b = *ids.get_unchecked(b_start + bi) as usize;
 
-            let dx = balls.x[b] - ax;
-            let dy = balls.y[b] - ay;
+            let dx = *xs.get_unchecked(b) - ax;
+            let dy = *ys.get_unchecked(b) - ay;
 
             let dist_sq = dx * dx + dy * dy;
 
-            if !(MIN_DIST_SQ..COLLISION_DIST_SQ).contains(&dist_sq) {
+            if dist_sq <= MIN_DIST_SQ || dist_sq >= COLLISION_DIST_SQ {
                 continue;
             }
 
-            let inv = dist_sq.sqrt().recip();
-            let overlap = (2.0 - dist_sq * inv).min(2.0 * MAX_OVERLAP_FRACTION, );
-            let push = overlap * 0.5 * inv * RELAXATION;
+            let dist = dist_sq.sqrt();
+            let overlap = (2.0 - dist).min(MAX_OVERLAP);
+            let push = overlap * (0.5 * STIFFNESS / dist);
 
             let px = dx * push;
             let py = dy * push;
 
-            *balls.x.get_unchecked_mut(a) -= px;
-            *balls.y.get_unchecked_mut(a) -= py;
+            *xs.get_unchecked_mut(a) -= px;
+            *ys.get_unchecked_mut(a) -= py;
 
-            *balls.x.get_unchecked_mut(b) += px;
-            *balls.y.get_unchecked_mut(b) += py;
+            *xs.get_unchecked_mut(b) += px;
+            *ys.get_unchecked_mut(b) += py;
         }
     }
 }

@@ -24,16 +24,16 @@ pub fn compute_cell_ids(
         });
 }
 
-pub fn build_histogram(particle_cell: &[u32], cell_count: &mut [u32]) {
+pub fn build_histogram(particle_cell: &[u32], cell_count: &mut [u8]) {
     cell_count.fill(0);
 
     let cell_len = cell_count.len();
     const CHUNK_SIZE: usize = 8192;
 
-    let partials: Vec<Vec<u32>> = particle_cell
+    let partials: Vec<Vec<u8>> = particle_cell
         .par_chunks(CHUNK_SIZE)
         .map_init(
-            || vec![0u32; cell_len],
+            || vec![0; cell_len],
             |hist, chunk| {
                 hist.fill(0);
 
@@ -53,11 +53,11 @@ pub fn build_histogram(particle_cell: &[u32], cell_count: &mut [u32]) {
     }
 }
 
-pub fn build_prefix_sum(cell_count: &[u32], cell_start: &mut [u32]) {
+pub fn build_prefix_sum(cell_count: &[u8], cell_start: &mut [u32]) {
     let mut sum = 0;
     for (dst, &count) in cell_start.iter_mut().zip(cell_count) {
         *dst = sum;
-        sum += count;
+        sum += count as u32;
     }
 }
 

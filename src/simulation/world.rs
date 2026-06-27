@@ -19,11 +19,11 @@ impl World {
         x: 0.,
         y: -150.0
     };
-    const MAX_BALLS: usize = 100000;
+    const MAX_BALLS: usize = 72000;
     pub fn new() -> Self {
         Self{
             balls: Balls::new(Self::MAX_BALLS),
-            grid: Grid::new(272,260,2.0,Self::MAX_BALLS),
+            grid: Grid::new(256,200,2.0,Self::MAX_BALLS),
         }
     }
 
@@ -31,8 +31,8 @@ impl World {
         if self.balls.x.len() < Self::MAX_BALLS {
            for i in 0..50{
                self.balls.add_ball(
-                   Vec2::new(5.0 + i as f32 * 0.1,400.0 + i as f32 * 2.0),
-                   Vec2::new(0.3,0.1),
+                   Vec2::new(5.0 + i as f32 * 0.1,300.0 + i as f32 * 2.0),
+                   Vec2::new(0.4,0.1),
                    Colour::new(0.0,i as f32 * 0.02,1.)
                );
            }
