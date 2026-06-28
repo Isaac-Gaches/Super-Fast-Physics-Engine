@@ -1,11 +1,17 @@
 # Super-Fast-Physics-Engine
 
 • Written in Rust and WGSL with my [easy-gpu](https://github.com/Isaac-Gaches/easy-gpu) crate.
+
 • Uniform grid for broadphase collision detection to remove O(n^2).
+
 • Flattened and compressed grid for better cahce locallity.
+
 • Narrowphase executed in alternating chunks on seperate threads.
+
 • Integration and part of grid builder performed using SIMD.
+
 • Batched renderering.
+
 • Tuned for staboloty, performance and accuracy.
 
 Below is 80,000 particles at 60fps on my laptop's intel i5-1035G1:
